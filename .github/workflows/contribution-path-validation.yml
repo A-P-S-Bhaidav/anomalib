@@ -1,0 +1,25 @@
+name: Contribution path validation
+on:
+  push:
+    branches: [codex/validate-windows-pointer]
+permissions:
+  contents: read
+jobs:
+  paths:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.10', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install uv==0.13.4
+      - run: uv pip install --system pytest==9.1.1 pytest-mock==3.17.0 platformdirs==4.13.5
+      - run: python -m pytest --confcutdir=tests/unit/utils tests/unit/utils/test_path.py -q
