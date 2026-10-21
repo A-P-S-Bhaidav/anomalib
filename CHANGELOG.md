@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fall back to a text pointer for versioned output on Windows when symlinks are unavailable and directory names are rejected by junction command validation.
+
 ## [v2.7.0] - 2026-10-06
 
 ### Added
