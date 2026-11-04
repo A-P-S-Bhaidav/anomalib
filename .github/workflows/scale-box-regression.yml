@@ -1,0 +1,44 @@
+name: Bounding box regression checks
+
+on:
+  push:
+    branches: [verify/data/scale-boxes]
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - name: Install the frozen CPU test environment
+        run: |
+          python -m pip install uv==0.13.7
+          uv sync --frozen --extra cpu --extra test
+      - name: Confirm the regression on the unchanged implementation
+        run: |
+          git show 6de90d712425e66ee2f5986af55b7996714e007b:src/anomalib/data/utils/boxes.py > src/anomalib/data/utils/boxes.py
+          set +e
+          uv run --no-sync pytest -q tests/unit/data/utils/test_boxes.py --junitxml=baseline.xml
+          result=$?
+          set -e
+          test "$result" -eq 1
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          suite = ET.parse('baseline.xml').getroot().find('testsuite')
+          assert suite.attrib['tests'] == '4', suite.attrib
+          assert suite.attrib['failures'] == '2', suite.attrib
+          assert suite.attrib['errors'] == '0', suite.attrib
+          PY
+          git restore --source=HEAD -- src/anomalib/data/utils/boxes.py
+      - name: Verify the corrected implementation and adjacent image utilities
+        run: |
+          uv run --no-sync pytest -q tests/unit/data/utils/test_boxes.py tests/unit/data/utils/test_image.py tests/unit/data/utils/test_path.py
