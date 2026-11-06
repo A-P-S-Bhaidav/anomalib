@@ -1,0 +1,82 @@
+name: Image discovery CPU validation
+
+on:
+  push:
+    branches: [verify/data/image-discovery]
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-regression:
+    if: github.repository == 'A-P-S-Bhaidav/anomalib'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - name: Install the frozen CPU test environment
+        run: |
+          python -m pip install uv==0.13.7
+          uv sync --frozen --extra cpu --extra test
+      - name: Reproduce the three regressions on unchanged upstream
+        run: |
+          python - <<'PY'
+          import subprocess
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          path = Path('src/anomalib/data/utils/image.py')
+          fixed = path.read_bytes()
+          original = subprocess.check_output([
+              'git', 'show',
+              '0e21c0a2d2a535de0531de9c30b92250cc20df64:src/anomalib/data/utils/image.py',
+          ])
+          try:
+              path.write_bytes(original)
+              result = subprocess.run([
+                  'uv', 'run', '--no-sync', 'pytest', '-q',
+                  'tests/unit/data/utils/test_image.py', '--junitxml=baseline.xml',
+              ])
+              assert result.returncode == 1, result.returncode
+              suite = ET.parse('baseline.xml').getroot().find('testsuite')
+              assert suite.attrib['tests'] == '10', suite.attrib
+              assert suite.attrib['failures'] == '3', suite.attrib
+              assert suite.attrib['errors'] == '0', suite.attrib
+              assert suite.attrib['skipped'] == '0', suite.attrib
+          finally:
+              path.write_bytes(fixed)
+          PY
+      - name: Run all data utility unit tests on the fix
+        run: uv run --no-sync pytest -q tests/unit/data/utils --junitxml=fixed.xml
+      - name: Load real PNG images through PredictDataset
+        run: |
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+
+          import torch
+          from PIL import Image
+
+          from anomalib.data import PredictDataset
+
+          for directory_name in ('nested.png', 'nested.JPG'):
+              with TemporaryDirectory() as temporary:
+                  root = Path(temporary)
+                  directory = root / directory_name
+                  directory.mkdir()
+                  image_path = directory / 'image.png'
+                  Image.new('RGB', (3, 2), (12, 34, 56)).save(image_path)
+                  dataset = PredictDataset(root)
+                  assert len(dataset) == 1
+                  item = dataset[0]
+                  assert item.image_path == str(image_path)
+                  assert tuple(item.image.shape) == (3, 2, 3)
+                  assert torch.allclose(item.image[:, 0, 0], torch.tensor([12, 34, 56]) / 255)
+          print('Both real-image PredictDataset cases passed.')
+          PY
