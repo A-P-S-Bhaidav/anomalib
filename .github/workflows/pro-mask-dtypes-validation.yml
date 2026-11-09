@@ -1,0 +1,71 @@
+name: PRO mask dtype CPU validation
+
+on:
+  push:
+    branches: [verify/metric/pro-mask-dtypes]
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-regression:
+    if: github.repository == 'A-P-S-Bhaidav/anomalib'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - name: Install the frozen CPU test environment
+        run: |
+          python -m pip install uv==0.13.7
+          uv sync --frozen --extra cpu --extra test
+          uv run --no-sync python -c 'import torch, torchvision; print(torch.__version__, torchvision.__version__)'
+      - name: Reproduce the prediction dtype failures on unchanged upstream
+        id: baseline
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          source = Path('src/anomalib/metrics/pro.py')
+          current = source.read_bytes()
+          base = '0e21c0a2d2a535de0531de9c30b92250cc20df64'
+          original = subprocess.check_output(['git', 'show', f'{base}:{source}'])
+          try:
+              if current != original:
+                  source.write_bytes(original)
+              run = subprocess.run([
+                  'uv', 'run', '--no-sync', 'pytest', '-q', '-m', 'cpu',
+                  'tests/unit/metrics/test_pro.py', '--junitxml=baseline.xml',
+              ])
+              assert run.returncode == 1, run.returncode
+              suite = ET.parse('baseline.xml').getroot().find('testsuite')
+              assert suite is not None and suite.attrib['tests'] == '8', suite
+              assert suite.attrib['errors'] == suite.attrib['skipped'] == '0', suite.attrib
+              failed = {c.attrib['name'] for c in suite.findall('testcase') if c.find('failure') is not None}
+              expected = {f'test_pro_prediction_dtype[{dtype}]' for dtype in (
+                  'float16', 'bfloat16', 'float64', 'int32', 'uint8',
+              )}
+              assert failed == expected, (failed, expected)
+              print('Five expected failures. Float32, boolean and existing PRO controls passed.')
+          finally:
+              if current != original:
+                  source.write_bytes(current)
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+              output.write(f'fixed={"true" if current != original else "false"}\n')
+          PY
+      - name: Run CPU metric and post-processing unit tests
+        if: steps.baseline.outputs.fixed == 'true'
+        run: uv run --no-sync pytest -q -m 'cpu and not network' tests/unit/metrics tests/unit/post_processing --junitxml=fixed.xml
+      - name: Build the Python wheel
+        if: steps.baseline.outputs.fixed == 'true'
+        run: uv build --wheel --no-sources --out-dir "$RUNNER_TEMP/anomalib-dist"
