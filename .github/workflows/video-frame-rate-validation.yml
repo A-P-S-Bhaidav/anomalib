@@ -1,0 +1,112 @@
+name: Video conversion frame rate validation
+
+on:
+  push:
+    branches: [test/data/verify-video-frame-rate]
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    if: github.repository == 'A-P-S-Bhaidav/anomalib'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MPLBACKEND: Agg
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - name: Install the frozen CPU test environment
+        run: |
+          python -m pip install uv==0.13.7
+          uv sync --frozen --extra cpu --extra test --extra video
+          uv run --no-sync python -c '
+          import av, cv2, torch, torchvision
+          print(av.__version__, cv2.__version__, torch.__version__, torchvision.__version__)
+          '
+      - name: Reproduce the baseline and verify real video conversion
+        run: |
+          set -euo pipefail
+          source_file=src/anomalib/data/utils/video.py
+          patched="$RUNNER_TEMP/video-patched.py"
+          cp "$source_file" "$patched"
+          trap 'cp "$patched" "$source_file"' EXIT
+          cat > "$RUNNER_TEMP/video-frame-rate.py" <<'PY'
+          import sys
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+
+          import cv2
+          import numpy as np
+
+          from anomalib.data.utils.video import convert_video
+
+          fractional_output = float(sys.argv[1])
+          with TemporaryDirectory() as directory:
+              for input_rate, expected_rate in ((7.5, fractional_output), (24.0, 24.0)):
+                  source = Path(directory) / f"input-{input_rate}.avi"
+                  output = Path(directory) / f"output-{input_rate}.avi"
+                  writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"MJPG"), input_rate, (32, 24))
+                  try:
+                      assert writer.isOpened()
+                      for value in (0, 80, 160, 240):
+                          writer.write(np.full((24, 32, 3), value, dtype=np.uint8))
+                  finally:
+                      writer.release()
+                  reader = cv2.VideoCapture(str(source))
+                  try:
+                      assert reader.isOpened()
+                      assert abs(reader.get(cv2.CAP_PROP_FPS) - input_rate) < 0.001
+                  finally:
+                      reader.release()
+                  convert_video(source, output, codec="XVID")
+                  reader = cv2.VideoCapture(str(output))
+                  try:
+                      assert reader.isOpened()
+                      output_rate = reader.get(cv2.CAP_PROP_FPS)
+                      assert abs(output_rate - expected_rate) < 0.001, (output_rate, expected_rate)
+                      frames = 0
+                      while True:
+                          success, frame = reader.read()
+                          if not success:
+                              break
+                          assert frame.shape == (24, 32, 3)
+                          frames += 1
+                      assert frames == 4, frames
+                  finally:
+                      reader.release()
+                  print(f"{input_rate} fps MJPEG to {output_rate} fps XVID, {frames} decoded frames")
+          PY
+          git show "HEAD^^:$source_file" > "$source_file"
+          baseline_status=0
+          uv run --no-sync pytest -q tests/unit/data/utils/test_video.py --junitxml="$RUNNER_TEMP/baseline.xml" || baseline_status=$?
+          test "$baseline_status" -eq 1
+          uv run --no-sync python - "$RUNNER_TEMP/baseline.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          suite = ET.parse(sys.argv[1]).getroot().find("testsuite")
+          assert suite is not None
+          assert suite.attrib["tests"] == "2" and suite.attrib["failures"] == "1", suite.attrib
+          assert suite.attrib["errors"] == suite.attrib["skipped"] == "0", suite.attrib
+          assert [case.attrib["name"] for case in suite.findall("testcase") if case.find("failure") is not None] == [
+              "test_convert_video_preserves_frame_rate[7.5]",
+          ]
+          PY
+          uv run --no-sync python "$RUNNER_TEMP/video-frame-rate.py" 7.0
+          cp "$patched" "$source_file"
+          git diff --exit-code -- "$source_file"
+          uv run --no-sync python "$RUNNER_TEMP/video-frame-rate.py" 7.5
+      - name: Run CPU data utility and ShanghaiTech unit tests
+        run: >-
+          uv run --no-sync pytest -q -m 'cpu and not network'
+          tests/unit/data/utils tests/unit/data/datamodule/video/test_shanghaitech.py
+      - name: Build the Python wheel
+        run: uv build --wheel --no-sources --out-dir "$RUNNER_TEMP/anomalib-dist"
