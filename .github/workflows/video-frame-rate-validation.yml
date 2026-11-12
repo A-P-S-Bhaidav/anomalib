@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
@@ -84,7 +84,7 @@ jobs:
                       reader.release()
                   print(f"{input_rate} fps MJPEG to {output_rate} fps XVID, {frames} decoded frames")
           PY
-          git show "HEAD^^:$source_file" > "$source_file"
+          git show "1684b8ab316d098beb997e4f2d340262b4c21566:$source_file" > "$source_file"
           baseline_status=0
           uv run --no-sync pytest -q tests/unit/data/utils/test_video.py --junitxml="$RUNNER_TEMP/baseline.xml" || baseline_status=$?
           test "$baseline_status" -eq 1
