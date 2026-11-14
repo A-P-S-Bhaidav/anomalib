@@ -54,7 +54,8 @@ jobs:
         run: |
           git checkout --detach "$BASE_SHA"
           if [ "$BASE_SHA" != "$PR_HEAD" ]; then
-            git merge --no-commit --no-ff "$PR_HEAD"
+            git -c user.name='PR validation' -c user.email='validation@example.invalid' \
+              merge --no-commit --no-ff "$PR_HEAD"
           fi
           git diff --cached --check
           git diff --cached --stat
