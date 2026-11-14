@@ -18,24 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - change: main
-            head: "437669f437b0d552c7d8382316e49cbaff574ce8"
-            regression: ""
-          - change: "3889"
-            head: "9b318e9e2034d1f9adbf4d096c365281aa35802d"
-            regression: tests/unit/utils/test_path.py
-          - change: "3897"
-            head: "a5ec0a4bb95a0c52b6edf92db6321eb2e4d6dabe"
-            regression: tests/unit/data/utils/test_boxes.py
-          - change: "3900"
-            head: "c71fc87ef75b71452149e22d38222b3840db16c5"
-            regression: tests/unit/data/utils/test_image.py
-          - change: "3906"
-            head: "9595c8fd3a69da4976327999a984132c028e8a0b"
-            regression: tests/unit/metrics/test_pro.py
-          - change: "3914"
-            head: "6d78c409520ba20f779de9b263cf7f36fc519c1b"
-            regression: tests/unit/data/utils/test_video.py
+          - change: VAD fixture
+            head: "f613b86ddc4fe015e9bf537573f876f93676d843"
+            regression: tests/unit/data/datamodule/image/test_vad.py
     env:
       BASE_SHA: "437669f437b0d552c7d8382316e49cbaff574ce8"
       PR_HEAD: ${{ matrix.head }}
