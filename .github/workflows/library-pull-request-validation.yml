@@ -1,0 +1,75 @@
+name: Library pull request validation
+
+on:
+  push:
+    branches: [test/ci/verify-library-pull-requests]
+    paths: [.github/workflows/library-pull-request-validation.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    name: CPU unit tests (${{ matrix.change }})
+    if: github.repository == 'A-P-S-Bhaidav/anomalib'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 32
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - change: main
+            head: "437669f437b0d552c7d8382316e49cbaff574ce8"
+            regression: ""
+          - change: "3889"
+            head: "9b318e9e2034d1f9adbf4d096c365281aa35802d"
+            regression: tests/unit/utils/test_path.py
+          - change: "3897"
+            head: "a5ec0a4bb95a0c52b6edf92db6321eb2e4d6dabe"
+            regression: tests/unit/data/utils/test_boxes.py
+          - change: "3900"
+            head: "c71fc87ef75b71452149e22d38222b3840db16c5"
+            regression: tests/unit/data/utils/test_image.py
+          - change: "3906"
+            head: "9595c8fd3a69da4976327999a984132c028e8a0b"
+            regression: tests/unit/metrics/test_pro.py
+          - change: "3914"
+            head: "6d78c409520ba20f779de9b263cf7f36fc519c1b"
+            regression: tests/unit/data/utils/test_video.py
+    env:
+      BASE_SHA: "437669f437b0d552c7d8382316e49cbaff574ce8"
+      PR_HEAD: ${{ matrix.head }}
+      REGRESSION_PATH: ${{ matrix.regression }}
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.10"
+      - name: Check out the exact proposed merge
+        run: |
+          git checkout --detach "$BASE_SHA"
+          if [ "$BASE_SHA" != "$PR_HEAD" ]; then
+            git merge --no-commit --no-ff "$PR_HEAD"
+          fi
+          git diff --cached --check
+          git diff --cached --stat
+      - name: Install the frozen CPU development environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install uv==0.13.7
+          uv sync --frozen --extra dev --extra cpu
+          uv run --no-sync python -c 'import PIL, torch, torchvision; print(PIL.__version__, torch.__version__, torchvision.__version__)'
+      - name: Run the affected regression tests
+        if: matrix.regression != ''
+        run: uv run --no-sync pytest -q -m 'cpu and not network' "$REGRESSION_PATH"
+      - name: Run CPU unit tests
+        run: >-
+          uv run --no-sync pytest -q -m 'cpu and not network'
+          --numprocesses=4 --dist=loadfile --timeout=150 --durations=10
+          tests/unit
